@@ -133,7 +133,7 @@ try:
         st.error("No AI aspect data found.")
 
     # 3. Visual Analysis Summary 
-    st.header(f"👁️ Overall Visual Analysis ({round(len(df_visual),-3)} Images)")
+    st.header(f"👁️ Overall Visual Analysis ({round(len(df_visual),-2)} Images)")
     col5, col6, col7 = st.columns(3)
     
     with col5:
