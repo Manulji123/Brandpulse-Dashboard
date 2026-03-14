@@ -36,7 +36,7 @@ def load_data():
     client = MongoClient(uri, tls=True, tlsCAFile=certifi.where())
     db = client["brandpulse"]
 
-    # 1. Raw records (for VADER counts)
+    # 1. Raw records
     recs = list(db["records"].find(
         {},
         {"platform": 1, "record_type": 1, "brand": 1,
@@ -54,7 +54,7 @@ def load_data():
                 df_records[c] = ""
             df_records[c] = df_records[c].fillna("")
 
-    # 2. AI aspects  (collection written by save-to-mongo cell)
+    # 2. AI aspects
     aspects = list(db["analysis_aspects"].find(
         {},
         {"brand": 1, "platform": 1, "aspect": 1,
@@ -70,7 +70,7 @@ def load_data():
                 df_aspects[c] = ""
             df_aspects[c] = df_aspects[c].fillna("")
 
-    # 3. AI suggestions (one-doc summary + individual rows)
+    # 3. AI suggestions
     sugg_rows = list(db["analysis_suggestions"].find(
         {}, {"brand": 1, "platform": 1, "suggestion": 1}
     ))
@@ -78,7 +78,7 @@ def load_data():
     if not df_suggestions.empty:
         df_suggestions["_id"] = df_suggestions["_id"].astype(str)
 
-    # 4. Strategic summary text (stored by save cell as a single doc)
+    # 4. Strategic summary text
     summary_doc = db["analysis_summary"].find_one({})
     ai_summary = summary_doc.get("summary", "") if summary_doc else ""
 
@@ -212,7 +212,6 @@ st.header("🧠 AI-Powered Aspect Analysis")
 if df_a.empty:
     st.warning("No aspect data found. Run the Analysis + Save-to-MongoDB notebooks first.")
 else:
-    # Top aspects bar chart
     col_a, col_b = st.columns([2, 1])
 
     with col_a:
@@ -236,10 +235,8 @@ else:
         st.pyplot(fig)
         plt.close()
 
-    # Sentiment per aspect stacked bar
     st.subheader("Sentiment Breakdown per Aspect")
     pivot = df_a.groupby(["aspect", "sentiment"]).size().unstack(fill_value=0)
-    # Ensure all sentiment columns present
     for s in ["positive", "negative", "neutral"]:
         if s not in pivot.columns:
             pivot[s] = 0
@@ -261,7 +258,6 @@ else:
     st.pyplot(fig)
     plt.close()
 
-    # Per-aspect pie charts grid
     st.subheader("Sentiment per Aspect (Detailed)")
     unique_aspects = sorted(df_a["aspect"].unique())
     num_cols = 4
@@ -276,7 +272,6 @@ else:
                 st.pyplot(fig)
                 plt.close()
 
-    # Top negative reasons
     st.subheader("🔴 Top Negative Reasons by Aspect")
     neg = df_a[df_a["sentiment"] == "negative"][["aspect", "reason"]]
     if not neg.empty:
@@ -313,7 +308,16 @@ else:
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 5 — Platform deep-dive
+# SECTION 5 — Platform Deep-Dive
+# ─────────────────────────────────────────────────────────────────────────────
+# What does this section do?
+#   Each platform tab shows:
+#     • Number of records collected
+#     • Breakdown of record types (tweet/comment/review/etc.) as a table
+#     • A bar chart of the top 8 most-mentioned aspects for that platform
+#     • A sample table of the actual records (title, text, url, date)
+#   It lets you drill into one platform at a time to see raw data +
+#   which topics people discuss most, without the global filters clouding it.
 # ─────────────────────────────────────────────────────────────────────────────
 st.header("🔎 Platform Deep-Dive")
 
@@ -327,8 +331,8 @@ platform_map = {
 
 for tab, (tab_label, plat_key) in zip(tabs, platform_map.items()):
     with tab:
-        df_p = df_r[df_r["platform"] == plat_key]
-        df_pa = df_a[df_a["platform"] == plat_key]
+        df_p  = df_r[df_r["platform"] == plat_key].copy()
+        df_pa = df_a[df_a["platform"] == plat_key].copy()
 
         if df_p.empty:
             st.info(f"No {tab_label} data collected yet.")
@@ -337,10 +341,14 @@ for tab, (tab_label, plat_key) in zip(tabs, platform_map.items()):
         c1, c2 = st.columns(2)
         with c1:
             st.metric("Records", len(df_p))
-            rt_counts = df_p["record_type"].value_counts()
-            st.dataframe(rt_counts.reset_index().rename(
-                columns={"index": "type", "record_type": "count"}
-            ), use_container_width=True)
+
+            # ── FIX: pandas ≥2.0 value_counts() returns a Series whose
+            #         .reset_index() already has the right column names.
+            #         The old rename(columns={"index": "type", "record_type": "count"})
+            #         fails because the "index" column no longer exists.
+            rt_counts = df_p["record_type"].value_counts().reset_index()
+            rt_counts.columns = ["type", "count"]   # always works regardless of pandas version
+            st.dataframe(rt_counts, use_container_width=True)
 
         with c2:
             if not df_pa.empty:
@@ -352,12 +360,21 @@ for tab, (tab_label, plat_key) in zip(tabs, platform_map.items()):
                 plt.tight_layout()
                 st.pyplot(fig)
                 plt.close()
+
+                # Mini sentiment pie for this platform
+                st.subheader("Aspect Sentiment")
+                plat_sent = df_pa["sentiment"].value_counts()
+                fig, ax = plt.subplots(figsize=(3.5, 3.5))
+                sentiment_pie(ax, plat_sent)
+                st.pyplot(fig)
+                plt.close()
             else:
                 st.info("No aspect data for this platform.")
 
         # Sample records table
         st.subheader(f"Sample {tab_label} Records")
-        show_cols = [c for c in ["record_type", "source_title", "text", "url", "created_at"]
+        show_cols = [c for c in ["record_type", "source_title", "text", "url", "created_at",
+                                  "ai_overall_sentiment"]
                      if c in df_p.columns]
         st.dataframe(
             df_p[show_cols].head(10).reset_index(drop=True),
@@ -380,4 +397,4 @@ with st.expander("🗃️ Raw Data Explorer"):
     else:
         st.dataframe(df_s.head(100), use_container_width=True)
 
-st.caption("BrandPulse — Powered by DeepSeek AI + MongoDB Atlas")
+st.caption("BrandPulse — Powered by XLM-RoBERTa + DeepSeek AI + MongoDB Atlas")
